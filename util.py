@@ -180,18 +180,19 @@ def pairwise_indices(length):
 
 def num_to_natural(group_ids):
     '''
-    Change the group number to natural number arrangement
+    Change the group number to natural number arrangement.
+    It makes group_ids stars from 1 instead of 0. (Are you gonna die without a detailer comment??????)
     '''
     if np.all(group_ids == -1):
         return group_ids
     array = copy.deepcopy(group_ids)
-    unique_values = np.unique(array[array != -1])
-    mapping = np.full(np.max(unique_values) + 2, -1)
-    mapping[unique_values + 1] = np.arange(len(unique_values))
+    unique_values = np.unique(array[array != -1]) # there are group numbers inside for example -1, 1,2,3,4,5 ... unique_values represents total pixels that in the segements area
+    mapping = np.full(np.max(unique_values) + 2, -1) # find max group number, then +2, create a size of max +2 array, filled with -1
+    mapping[unique_values + 1] = np.arange(len(unique_values)) # unique_values + 1 :makes index starts from 1.
     array = mapping[array + 1]
     return array
 
-
+# give match points' indices of two pcds
 def get_matching_indices(source, pcd_tree, search_voxel_size, K=None):
     match_inds = []
     for i, point in enumerate(source.points):

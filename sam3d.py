@@ -35,19 +35,95 @@ def pcd_ensemble(org_path, new_path, data_path, vis_path):
     data = torch.load(data_path)
     visualize_partition(data["coord"], new_group, vis_path)
 
-
+# Get SAM-segmentation result and assign them to a group-id, return group_ids
 def get_sam(image, mask_generator):
-    masks = mask_generator.generate(image)
-    group_ids = np.full((image.shape[0], image.shape[1]), -1, dtype=int)
-    num_masks = len(masks)
+    masks = mask_generator.generate(image) 
+    '''
+    Mask generation returns a list over masks, where each mask is a dictionary containing various data about the mask. These keys are:
+
+    segmentation : the mask
+    area : the area of the mask in pixels
+    bbox : the boundary box of the mask in XYWH format
+    predicted_iou : the model's own prediction for the quality of the mask
+    point_coords : the sampled input point that generated this mask
+    stability_score : an additional measure of mask quality
+    crop_box : the crop of the image used to generate this mask in XYWH format
+    
+    An example to see the form of them:
+    
+    INPUT
+    print('segmentation is\n', masks[0]['segmentation'])
+    print('shape of segmetnation is\n', np.shape(masks[0]['segmentation']))
+    print('280*300 is', 280*300)
+    print('area is\n', masks[0]['area'])
+    print('bbox is\n', masks[0]['bbox'])
+    print('predicted_iou is\n', masks[0]['predicted_iou'])
+    print('point_coords is\n', masks[0]['point_coords'])
+    print('stability_score is\n', masks[0]['stability_score'])
+    print('crop_box is\n', masks[0]['crop_box'])
+    
+    OUTPUT:
+        segmentation is
+         [[False False False ...  True  True  True]
+         [ True  True  True ...  True  True  True]
+         [ True  True  True ...  True  True  True]
+         ...
+         [False False False ... False False False]
+         [False False False ... False False False]
+         [False False False ... False False False]]
+        shape of segmetnation is
+         (280, 300)
+        280*300 is 84000
+        area is
+         26282
+        bbox is
+         [0, 0, 299, 133]
+        predicted_iou is
+         1.0225906372070312
+        point_coords is
+         [[4.6875, 30.625]]
+        stability_score is
+         0.9784221649169922
+        crop_box is
+         [0, 0, 300, 280]
+         
+    INPUT
+        test_image = group_ids = np.full((masks[0]['segmentation'].shape[0], masks[0]['segmentation'].shape[1]), -1, dtype=int)
+        print(test_image, '\n')
+        test_image[masks[0]['segmentation']] = 5
+        print(test_image)
+    OUTPUT
+        [[-1 -1 -1 ... -1 -1 -1]
+         [-1 -1 -1 ... -1 -1 -1]
+         [-1 -1 -1 ... -1 -1 -1]
+         ...
+         [-1 -1 -1 ... -1 -1 -1]
+         [-1 -1 -1 ... -1 -1 -1]
+         [-1 -1 -1 ... -1 -1 -1]] 
+
+        [[-1 -1 -1 ...  5  5  5]
+         [ 5  5  5 ...  5  5  5]
+         [ 5  5  5 ...  5  5  5]
+         ...
+         [-1 -1 -1 ... -1 -1 -1]
+         [-1 -1 -1 ... -1 -1 -1]
+         [-1 -1 -1 ... -1 -1 -1]]
+    '''
+    group_ids = np.full((image.shape[0], image.shape[1]), -1, dtype=int) # group_ids has same shape of image
+    num_masks = len(masks) #  show how many masks it generates. Each mask is a dictionary.
     group_counter = 0
     for i in reversed(range(num_masks)):
         # print(masks[i]["predicted_iou"])
-        group_ids[masks[i]["segmentation"]] = group_counter
+        group_ids[masks[i]["segmentation"]] = group_counter # Is used to map segmentations to group identifiers
         group_counter += 1
-    return group_ids
-
-
+    return group_ids # Should be an array with the same size of the image, where segments are marked with group ids 
+    '''
+    The end result is that group_ids is a 2D array of the same dimensions as the image, 
+    where each pixel is associated with a group identifier based on the mask it belongs to, 
+    or it remains unassigned with a value of -1 if it does not belong to any mask. 
+    '''
+    
+# Data processing to obtain point cloud data
 def get_pcd(scene_name, color_name, rgb_path, mask_generator, save_2dmask_path):
     intrinsic_path = join(rgb_path, scene_name, 'intrinsics', 'intrinsic_depth.txt')
     depth_intrinsic = np.loadtxt(intrinsic_path)
@@ -56,14 +132,14 @@ def get_pcd(scene_name, color_name, rgb_path, mask_generator, save_2dmask_path):
     depth = join(rgb_path, scene_name, 'depth', color_name[0:-4] + '.png')
     color = join(rgb_path, scene_name, 'color', color_name)
 
-    depth_img = cv2.imread(depth, -1) # read 16bit grayscale image
+    depth_img = cv2.imread(depth, -1) # read 16bit grayscale image # 
     mask = (depth_img != 0)
     color_image = cv2.imread(color)
     color_image = cv2.resize(color_image, (640, 480))
 
-    save_2dmask_path = join(save_2dmask_path, scene_name)
+    save_2dmask_path = join(save_2dmask_path, scene_name) # save 2dmask
     if mask_generator is not None:
-        group_ids = get_sam(color_image, mask_generator)
+        group_ids = get_sam(color_image, mask_generator) # to obtain a map of area of segments with group number assigned in every pixel inside each area
         if not os.path.exists(save_2dmask_path):
             os.makedirs(save_2dmask_path)
         img = Image.fromarray(num_to_natural(group_ids).astype(np.int16), mode='I;16')
@@ -73,15 +149,15 @@ def get_pcd(scene_name, color_name, rgb_path, mask_generator, save_2dmask_path):
         img = Image.open(group_path)
         group_ids = np.array(img, dtype=np.int16)
 
-    color_image = np.reshape(color_image[mask], [-1,3])
+    color_image = np.reshape(color_image[mask], [-1,3]) # -1：automatically calculate the size of that dimension to ensure the total number of elements remains the same.
     group_ids = group_ids[mask]
     colors = np.zeros_like(color_image)
     colors[:,0] = color_image[:,2]
     colors[:,1] = color_image[:,1]
     colors[:,2] = color_image[:,0]
 
-    pose = np.loadtxt(pose)
-    
+    pose = np.loadtxt(pose) # TODO: what for? where is it?
+    # TODO: feel confused about processing depth image/depth_intrinsic. Where are they? Differences? depth_shift? Format?
     depth_shift = 1000.0
     x,y = np.meshgrid(np.linspace(0,depth_img.shape[1]-1,depth_img.shape[1]), np.linspace(0,depth_img.shape[0]-1,depth_img.shape[0]))
     uv_depth = np.zeros((depth_img.shape[0], depth_img.shape[1], 3))
@@ -105,12 +181,12 @@ def get_pcd(scene_name, color_name, rgb_path, mask_generator, save_2dmask_path):
     points[:,0] = X
     points[:,1] = Y
     points[:,2] = uv_depth[:,2]
-    points_world = np.dot(points, np.transpose(pose))
+    points_world = np.dot(points, np.transpose(pose)) # TODO: Need some explaination. POSE
     group_ids = num_to_natural(group_ids)
     save_dict = dict(coord=points_world[:,:3], color=colors, group=group_ids)
     return save_dict
 
-
+# Make point cloud data from dict obtained in get_pcd
 def make_open3d_point_cloud(input_dict, voxelize, th):
     input_dict["group"] = remove_small_group(input_dict["group"], th)
     # input_dict = voxelize(input_dict)
@@ -118,11 +194,11 @@ def make_open3d_point_cloud(input_dict, voxelize, th):
     xyz = input_dict["coord"]
     if np.isnan(xyz).any():
         return None
-    pcd = o3d.geometry.PointCloud()
+    pcd = o3d.geometry.PointCloud() # This line creates an empty Open3D point cloud object (pcd).
     pcd.points = o3d.utility.Vector3dVector(xyz)
     return pcd
 
-
+# Bidirectional Merging between Two Point Clouds
 def cal_group(input_dict, new_input_dict, match_inds, ratio=0.5):
     group_0 = input_dict["group"]
     group_1 = new_input_dict["group"]
@@ -133,7 +209,7 @@ def cal_group(input_dict, new_input_dict, match_inds, ratio=0.5):
     unique_groups, group_1_counts = np.unique(group_1, return_counts=True)
     group_1_counts = dict(zip(unique_groups, group_1_counts))
 
-    # Calculate the group number correspondence of overlapping points
+    # Calculate the group number correspondence of overlapping points # match_inds: correspondences
     group_overlap = {}
     for i, j in match_inds:
         group_i = group_1[i]
@@ -157,11 +233,11 @@ def cal_group(input_dict, new_input_dict, match_inds, ratio=0.5):
         count = list(overlap_count.values())[max_index]
         total_count = min(group_0_counts[group_j], group_1_counts[group_i]).astype(np.float32)
         # print(count / total_count)
-        if count / total_count >= ratio:
+        if count / total_count >= ratio:  # See paper 2.2
             group_1[group_1 == group_i] = group_j
     return group_1
 
-
+# Paper 2.3?
 def cal_2_scenes(pcd_list, index, voxel_size, voxelize, th=50):
     if len(index) == 1:
         return(pcd_list[index[0]])
@@ -179,7 +255,7 @@ def cal_2_scenes(pcd_list, index, voxel_size, voxelize, th=50):
         return input_dict_0
 
     # Cal Dul-overlap
-    pcd0_tree = o3d.geometry.KDTreeFlann(copy.deepcopy(pcd0))
+    pcd0_tree = o3d.geometry.KDTreeFlann(copy.deepcopy(pcd0)) # Creates a KDTree structure for the point cloud. A KDTree is a data structure used for efficient spatial searching, like finding the nearest neighbors in 3D space.
     match_inds = get_matching_indices(pcd1, pcd0_tree, 1.5 * voxel_size, 1)
     pcd1_new_group = cal_group(input_dict_0, input_dict_1, match_inds)
     # print(pcd1_new_group)
@@ -190,7 +266,7 @@ def cal_2_scenes(pcd_list, index, voxel_size, voxelize, th=50):
     pcd0_new_group = cal_group(input_dict_1, input_dict_0, match_inds)
     # print(pcd0_new_group)
 
-    pcd_new_group = np.concatenate((pcd0_new_group, pcd1_new_group), axis=0)
+    pcd_new_group = np.concatenate((pcd0_new_group, pcd1_new_group), axis=0)# TODO: why stack them together? to merge?
     pcd_new_group = num_to_natural(pcd_new_group)
     pcd_new_coord = np.concatenate((input_dict_0["coord"], input_dict_1["coord"]), axis=0)
     pcd_new_color = np.concatenate((input_dict_0["color"], input_dict_1["color"]), axis=0)
@@ -211,7 +287,7 @@ def seg_pcd(scene_name, rgb_path, data_path, save_path, mask_generator, voxel_si
         pcd_dict = get_pcd(scene_name, color_name, rgb_path, mask_generator, save_2dmask_path)
         if len(pcd_dict["coord"]) == 0:
             continue
-        pcd_dict = voxelize(pcd_dict)
+        pcd_dict = voxelize(pcd_dict) # TODO: What is voxelize for?
         pcd_list.append(pcd_dict)
     
     while len(pcd_list) != 1:
@@ -243,7 +319,7 @@ def seg_pcd(scene_name, rgb_path, data_path, save_path, mask_generator, voxel_si
     group[mask_dis] = -1
     group = group.astype(np.int16)
     torch.save(num_to_natural(group), join(save_path, scene_name + ".pth"))
-
+    # Seems like use SAM to generate mask, and use KNN to label them?
 
 def get_args():
     '''Command line arguments.'''
